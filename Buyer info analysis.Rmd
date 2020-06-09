@@ -1,0 +1,399 @@
+---
+title: "Buyer Info Analysis"
+output:
+  pdf_document:
+    number_sections: yes
+colorlinks: true
+urlcolor: 'red'
+fontsize: 12pt
+header-includes: \usepackage{color,soul}
+---
+
+```{r, include=FALSE}
+
+# Load libraries needed for analysis
+library(knitr)                 # Creating PDF output using Markdown
+library(tidyverse)             # Data manipulation and graphing
+library(readxl)                # To use read_excel()
+library(psych)                 # To use corr.test() for correlation
+library (dplyr)
+library(reshape)
+#matrices
+theme_set(theme_bw())          # Get rid of gray background in plots
+
+# Set some defaults for the R Markdown document
+opts_chunk$set(echo=TRUE,      # Print the code in all the chunks
+               warning=FALSE,  # Don't print warning statements
+               message=FALSE,  # Don't print other R output messages
+               comment=NA)     # Helps produce prettier output
+```
+
+# Data Manipulation 
+
+```{r}
+# Read in data
+df.2016_1 <- read_excel("Buyer Info by Game- 2016 1st half v2.xlsx")
+df.2016_2 <- read_excel("Buyer Info by Game- 2016 2nd half v2.xlsx")
+df.2017_1 <- read_excel("Buyer Info by Game- 2017 1st half v2.xlsx")
+df.2017_2 <- read_excel("Buyer Info by Game- 2017 2nd half v2.xlsx")
+df.2018_1 <- read_excel("Buyer Info by Game- 2018 1st half v2.xlsx")
+df.2018_2 <- read_excel("Buyer Info by Game- 2018 2nd half v2.xlsx")
+df.2019_1 <- read_excel("Buyer Info by Game- 2019 1st half v2.xlsx")
+df.2019_2 <- read_excel("Buyer Info by Game- 2019 2nd half v2.xlsx")
+
+df.2016_1$Category = "2016_1"
+df.2016_2$Category = "2016_2"
+df.2017_1$Category = "2017_1"
+df.2017_2$Category = "2017_2"
+df.2018_1$Category = "2018_1"
+df.2018_2$Category = "2018_2"
+df.2019_1$Category = "2019_1"
+df.2019_2$Category = "2019_2"
+
+df.2016_1$Year = "2016"
+df.2016_2$Year = "2016"
+df.2017_1$Year = "2017"
+df.2017_2$Year = "2017"
+df.2018_1$Year = "2018"
+df.2018_2$Year = "2018"
+df.2019_1$Year = "2019"
+df.2019_2$Year = "2019"
+```
+
+```{r}
+# Combine datasets
+df.all <- rbind(df.2016_1, df.2016_2, df.2017_1, df.2017_2, df.2018_1, df.2018_2, df.2019_1, df.2019_2)
+
+# Create copy of dataset with all transactions
+df.all.master <- df.all
+
+# Filter only individual transactions
+df.all <- df.all %>% filter(TicketingCategory=="Individual")
+
+# ** FILTER OUT ACCOUNTID = -1 (bought at ticket window) and -2
+df.all <- df.all %>% filter(!AccountID %in% c(-1, -2))
+
+df.all %>% group_by(Year) %>% summarize(sum_total=sum(SumOfSold))
+
+# Convert date columns to date type
+df.all <- transform(df.all, SaleDateKey = as.Date(as.character(SaleDateKey), "%Y%m%d"))
+df.all$EventDate <- as.Date(df.all$EventDate[], "%Y-%m-%d")
+df.all$DaysBought <- df.all$EventDate - df.all$SaleDateKey
+df.all$DaysBought <- as.numeric(df.all$DaysBought[], units="days")
+
+df.all$YearEventNameAccountID <- paste(df.all$Year, df.all$EventName, df.all$AccountID)
+
+# Join promo data to main df
+## Read in B&B and F4P Data
+df.f4p_bb <- read_excel("B^L0B and F4P Data_Updated.xlsx", sheet = "All_Final")
+
+## Add YearEventName column to match on
+df.f4p_bb$YearEventName <- paste(df.f4p_bb$Year, df.f4p_bb$`Event Name`)
+df.all$YearEventName <- paste(df.all$Year, df.all$EventName)
+
+## Join f4p / b&b promo data to df
+df.all <- left_join(x = df.all, y = df.f4p_bb, by="YearEventName")
+
+## Remove columns not needed
+df.all$Year.y <- NULL
+df.all$EventNameYear <- NULL
+df.all$`Event Name`<- NULL
+
+# Rename year column
+df.all$Year = df.all$Year.x
+df.all$Year.x <- NULL
+
+###-------------------------###
+
+# Code by B&B transactions - 2018
+## Read in data
+df.2018bb <- read_excel("2018 B&B Sold.xlsx", sheet = "To Use")
+
+## Create EventNameAccountIDSRS column to join on for main df
+df.all$EventNameAccountIDSR <- paste(df.all$EventName, df.all$AccountID, df.all$SectionName, df.all$RowName)
+
+## Join datasets
+df.all <- left_join(x = df.all, y = df.2018bb, by="EventNameAccountIDSR")
+
+## Clear columns not needed + add column
+df.all$PriceCodeF4P = 0 
+df.all$PriceCodeBB2018=df.all$PriceCodeBB
+df.all$tm_event_name <- NULL
+df.all$tm_section_name <- NULL
+df.all$tm_row_name <- NULL
+df.all$seat_num <- NULL
+df.all$last_seat <- NULL
+df.all$num_seats <- NULL
+df.all$acct_id <- NULL
+df.all$price_code <- NULL
+
+df.all %>% group_by(Year) %>% summarize(sum_total=sum(SumOfSold))
+```
+
+```{r}
+
+###-----------------------###
+
+
+# Code by B&B and F4P
+## 2019 transactions
+## B&B
+df.all.1 <- df.all %>% filter(Year==2019) %>% filter(PriceCode %in% c("EON", "FON", "GON"))%>% mutate(PriceCodeBB = 1, PriceCodeF4P = 0)
+### F4P
+df.all.2 <- df.all %>% filter(Year==2019) %>% filter(PriceCode %in% c("COK", "DOK", "EOK", "FOK", "HOK", "IOK", "JOK"))%>% mutate(PriceCodeBB = 0, PriceCodeF4P = 1)
+
+## 2018 transactions
+### F4P
+df.all.3 <- df.all %>% filter(Year==2018) %>% filter(PriceCode %in% c("COE", "DOE", "FOE", "IOE"))%>% mutate(PriceCodeBB = 0, PriceCodeF4P = 1)
+
+## Combine back to master dataset
+df.all.4 <- df.all %>% filter(PriceCodeBB2018==1)
+df.all.other <- df.all %>% filter(!PriceCode %in% c("EON", "FON", "GON", "COK", "DOK", "EOK", "FOK", "HOK", "IOK", "COE", "DOE", "FOE", "IOE")) %>% filter(!PriceCodeBB %in% c(1)) %>% mutate(PriceCodeBB = 0, PriceCodeF4P = 0)
+df.all <- rbind(df.all.1, df.all.2, df.all.3, df.all.4, df.all.other)
+
+## Clean up data, change NAs to 0s
+df.all$PriceCodeBB[is.na(df.all$PriceCodeBB)] <- 0
+df.all$PriceCodeF4P[is.na(df.all$PriceCodeF4P)] <- 0
+df.all$BB[is.na(df.all$BB)] <- 0
+df.all$F4P[is.na(df.all$F4P)] <- 0
+df.all$PriceCodeBB2018 <- NULL
+
+###--------------------###
+
+# Account-based view
+## List of distinct Account IDs across all years
+df.accounts <- df.all %>% group_by(AccountID, Year) %>% summarize(ytd_num_games=n_distinct(EventName))
+df.accounts <- cast(df.accounts, AccountID~Year)
+## Rename columns
+df.accounts <- df.accounts %>% dplyr::rename(num_games_2017 = "2017", num_games_2018 = "2018", num_games_2019 = "2019")
+
+
+
+###--------------------------###
+
+
+# Account-based view
+# Number of promo games - F4P (2019)
+promo.purchasers.f4p2019 <- df.all %>% filter(Year==2019) %>% filter(PriceCodeF4P==1) %>% group_by(AccountID) %>% summarize(num_promo_games_f4p_2019=n_distinct(EventName))
+promo.purchasers.f4p2019$BoughtF4P2019 = 1
+
+# Number of promo games - B&B (2019)
+promo.purchasers.bb2019 <- df.all %>% filter(Year==2019) %>% filter(PriceCodeBB==1) %>% group_by(AccountID) %>% summarize(num_promo_games_bb_2019=n_distinct(EventName))
+promo.purchasers.bb2019$BoughtBB2019 = 1
+
+# Number of promo games - F4P (2018)
+promo.purchasers.f4p2018 <- df.all %>% filter(Year==2018) %>% filter(PriceCodeF4P==1) %>% group_by(AccountID) %>% summarize(num_promo_games_f4p_2018=n_distinct(EventName))
+promo.purchasers.f4p2018$BoughtF4P2018 = 1
+
+# Number of promo games - B&B (2018)
+promo.purchasers.bb2018 <- df.all %>% filter(Year==2018) %>% filter(PriceCodeBB==1) %>% group_by(AccountID) %>% summarize(num_promo_games_bb_2018=n_distinct(EventName))
+promo.purchasers.bb2018$BoughtBB2018 = 1
+
+
+###------------------###
+
+# Account-based view
+# New Fan designation across years - CHECK
+#df.newfan <- df.all %>% group_by(AccountID, Year) %>% summarize(newfan=mean(NewFan))
+
+# Create account based view
+df.accountview <- left_join(x=df.accounts, y=promo.purchasers.f4p2019, by="AccountID")
+df.accountview <- left_join(x=df.accounts, y=promo.purchasers.bb2019, by="AccountID")
+df.accountview <- left_join(x=df.accounts, y=promo.purchasers.f4p2018, by="AccountID")
+df.accountview <- left_join(x=df.accounts, y=promo.purchasers.bb2018, by="AccountID")
+
+# Join to df.all to denote how many distinct games & distinct promo games they went to
+## Join distinct game columns
+df.all <- left_join(x=df.all, y=df.accounts, by="AccountID")
+## Join distinct promo game columns
+df.all <- left_join(x=df.all, y=promo.purchasers.f4p2019, by="AccountID")
+df.all <- left_join(x=df.all, y=promo.purchasers.bb2019, by="AccountID")
+df.all <- left_join(x=df.all, y=promo.purchasers.f4p2018, by="AccountID")
+df.all <- left_join(x=df.all, y=promo.purchasers.bb2018, by="AccountID")
+
+# Change name of df
+df.all.individual <- df.all
+
+# Change NAs to 0 
+df.all.individual$BoughtF4P2019[is.na(df.all.individual$BoughtF4P2019)] <- 0
+df.all.individual$BoughtBB2019[is.na(df.all.individual$BoughtBB2019)] <- 0
+df.all.individual$BoughtF4P2018[is.na(df.all.individual$BoughtF4P2018)] <- 0
+df.all.individual$BoughtBB2018[is.na(df.all.individual$BoughtBB2018)] <- 0
+
+
+```
+
+# Exploratory analysis
+```{r}
+
+# Plot distribution of # of days before game ticket is bought, across years
+# All fans
+df.all.individual %>% ggplot(., aes(x=DaysBought)) + geom_histogram(binwidth=1, colour="black", fill="white") + geom_vline(aes(xintercept=mean(DaysBought)), color="red", linetype="dashed", size=1) + facet_wrap(~Year, ncol=4) + labs(title="All Fans") + coord_cartesian(xlim=c(-200, 365))
+# New Fans only
+df.all.individual %>% filter(NewFan==1) %>% ggplot(., aes(x=DaysBought)) + geom_histogram(binwidth=1, colour="black", fill="white") + geom_vline(aes(xintercept=mean(DaysBought)), color="blue", linetype="dashed", size=1) + facet_wrap(~Year, ncol=4) + labs(title="New Fans Only") + coord_cartesian(xlim=c(-200, 365))
+# Old Fans only
+df.all.individual %>% filter(NewFan==0) %>% ggplot(., aes(x=DaysBought)) + geom_histogram(binwidth=1, colour="black", fill="white") + geom_vline(aes(xintercept=mean(DaysBought)), color="green", linetype="dashed", size=1) + facet_wrap(~Year, ncol=4) + labs(title="Old Fans Only") + coord_cartesian(xlim=c(-200, 365))
+```
+
+```{r}
+# Deeper dive into long days bought
+## Percentiles
+quantile(df.all.individual$DaysBought)
+
+## Summary by team
+df.all.individual %>% filter(DaysBought >200) %>% group_by(Team) %>% summarize(mean_sold = mean(SumOfSold), mean_revenue = (sum(Ticket.Revenue)/sum(SumOfSold)), mean_daysbought = mean(DaysBought), num_transactions = NROW(AccountID), pct_transactions = NROW(AccountID) / NROW(df.all$AccountID)) %>% arrange(desc(mean_daysbought))
+
+## Look at tail end of Days Bought
+df.all.individual %>% filter(DaysBought >340) %>% group_by(Team) %>% summarize(num_transactions = NROW(AccountID), pct_transactions = NROW(AccountID) / NROW(df.all.individual$AccountID)) %>% arrange(desc(num_transactions))
+
+# Look at outliers (DaysBought <0)
+df.all.individual %>% filter(DaysBought <0) %>% group_by(AccountID) %>% summarize(num_transactions=NROW(AccountID)) %>% arrange(desc(num_transactions))
+
+## Summary by section
+df.all.individual %>% filter(DaysBought >200) %>% group_by(RulePriceLevelDesc) %>% summarize(mean_sold = mean(SumOfSold), mean_daysbought = mean(DaysBought), num_transactions = NROW(AccountID), pct_transactions = NROW(AccountID) / NROW(df.all.individual$AccountID)) %>% arrange(desc(mean_daysbought))
+
+# Summary table for tickets sold & days before bought, for each account holder for each game
+df.all.individual %>% 
+  group_by(Category) %>% 
+        summarize(
+          mean_days = mean(DaysBought), 
+          mean_tickets = mean(SumOfSold), 
+          sum_tickets = sum(SumOfSold))
+
+# Deep dive into new fans [**USED IN SLIDE**]
+## Promo = BB
+### Distinct Fans
+df.all.individual %>% group_by(Year, BB) %>% summarize(num_newfan = n_distinct(AccountID[NewFan==1]), num_totalfans = n_distinct(AccountID), pct_newfan = n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)) %>% kable()
+### Ticket Volume
+df.all.individual %>% group_by(Year, BB) %>% summarize(num_newfan = sum(SumOfSold[NewFan==1]), num_totalfans = sum(SumOfSold), pct_newfan = num_newfan / num_totalfans) %>% kable()
+
+## Promo = F4P
+### Distinct Fans
+df.all.individual %>% group_by(Year, F4P) %>% summarize(num_newfan = n_distinct(AccountID[NewFan==1]), num_totalfans = n_distinct(AccountID), pct_newfan = n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)) %>% kable()
+### Ticket Volume
+df.all.individual %>% group_by(Year, F4P) %>% summarize(num_newfan = sum(SumOfSold[NewFan==1]), num_totalfans = sum(SumOfSold), pct_newfan = num_newfan / num_totalfans) %>% kable()
+```
+
+```{r}
+## Grouped by promo package buyers vs. not [***USED IN SLIDE***]
+### 2019 F4P - distinct fan view
+df.all.individual %>% filter(Year==2019) %>% group_by(BoughtF4P2019) %>% summarize(num_newdistinctfan = n_distinct(AccountID[NewFan==1]), num_totaldistinctfans = n_distinct(AccountID), pct_newfan = (n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)), avg_games_in_year= (n_distinct(YearEventNameAccountID) / n_distinct(AccountID))) %>% kable()
+### 2019 F4P Transaction-based view
+df.all.individual %>% filter(Year==2019) %>% group_by(PriceCodeF4P) %>% summarize(total_newfan_tickets = sum(SumOfSold[NewFan==1]), total_tickets = sum(SumOfSold), pct_newfan = total_newfan_tickets/total_tickets, avg_days_bought=mean(DaysBought)) %>% kable()
+
+### 2018 F4P
+df.all.individual %>% filter(Year==2018) %>% group_by(BoughtF4P2018) %>% summarize(num_newdistinctfan = n_distinct(AccountID[NewFan==1]), num_totaldistinctfans = n_distinct(AccountID), pct_newfan = (n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)), avg_games_in_year= (n_distinct(YearEventNameAccountID) / n_distinct(AccountID))) %>% kable()
+### 2018 F4P - Transaction based view
+df.all.individual %>% filter(Year==2018) %>% group_by(PriceCodeF4P) %>% summarize(total_newfan_tickets = sum(SumOfSold[NewFan==1]), total_tickets = sum(SumOfSold), pct_newfan = total_newfan_tickets/total_tickets, avg_days_bought=mean(DaysBought)) %>% kable()
+
+### 2019 BB
+df.all.individual %>% filter(Year==2019) %>% group_by(BoughtBB2019) %>% summarize(num_newdistinctfan = n_distinct(AccountID[NewFan==1]), num_totaldistinctfans = n_distinct(AccountID), pct_newfan = (n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)), avg_games_in_year= (n_distinct(YearEventNameAccountID) / n_distinct(AccountID))) %>% kable()
+### 2019 BB Transaction-based view
+df.all.individual %>% filter(Year==2019) %>% group_by(PriceCodeBB) %>% summarize(total_newfan_tickets = sum(SumOfSold[NewFan==1]), total_tickets = sum(SumOfSold), pct_newfan = total_newfan_tickets/total_tickets, avg_days_bought=mean(DaysBought)) %>% kable()
+
+### 2018 BB
+df.all.individual %>% filter(Year==2018) %>% group_by(BoughtBB2018) %>% summarize(num_newdistinctfan = n_distinct(AccountID[NewFan==1]), num_totaldistinctfans = n_distinct(AccountID), pct_newfan = (n_distinct(AccountID[NewFan==1]) / n_distinct(AccountID)), avg_games_in_year= (n_distinct(YearEventNameAccountID) / n_distinct(AccountID))) %>% kable()
+### 2018 BB Transaction-based view
+df.all.individual %>% filter(Year==2018) %>% group_by(PriceCodeBB) %>% summarize(total_newfan_tickets = sum(SumOfSold[NewFan==1]), total_tickets = sum(SumOfSold), pct_newfan = total_newfan_tickets/total_tickets, avg_days_bought=mean(DaysBought)) %>% kable()
+```
+
+```{r}
+# Deep dive into 2019 [**USED IN SLIDE**]
+## F4P 
+df.all.individual %>% filter(Year==2019) %>% group_by(NewFan, BoughtF4P2019) %>% summarize(avg_games = n_distinct(YearEventNameAccountID) / n_distinct(AccountID)) %>% kable(digits=2)
+
+## B&B
+df.all.individual %>% filter(Year==2019) %>% group_by(NewFan, BoughtBB2019) %>% summarize(avg_games = n_distinct(YearEventNameAccountID) / n_distinct(AccountID)) %>% kable(digits=2)
+
+```
+
+```{r}
+# Find average tickets per game 
+df.findavgticketspergame <- df.all.individual %>% filter(Year==2019) %>% group_by(YearEventNameAccountID, NewFan, BoughtBB2019, BoughtF4P2019) %>% summarize(sum_tickets=sum(SumOfSold))
+
+##BB
+df.findavgticketspergame %>% group_by(NewFan, BoughtBB2019) %>% summarize(mean_tickets=mean(sum_tickets)) %>% kable(digits=2)
+
+##F4P
+df.findavgticketspergame %>% group_by(NewFan, BoughtF4P2019) %>% summarize(mean_tickets=mean(sum_tickets)) %>% kable(digits=2)
+
+# Find average tickets per year by account holder
+df.findavgticketsperyear <- df.all.individual %>% filter(Year==2019) %>% group_by(YearAccountID, NewFan, BoughtBB2019, BoughtF4P2019) %>% summarize(sum_tickets=sum(SumOfSold))
+
+```
+
+```{r}
+# Summary table for % early attendance
+table <- df.all.individual %>% group_by(Year, NewFan) %>% summarize(pct_ea = NROW(AccountID[EarlyAttender==1]) / NROW(AccountID))
+cast(table, Year ~ NewFan)
+
+df.all.individual %>% filter(Year==2019) %>% group_by(Year, BoughtPromoIn2019) %>% summarize(pct_ea = NROW(AccountID[EarlyAttender==1]) / NROW(AccountID)) %>% kable()
+```
+
+```{r}
+# Look at games where promo is offered vs. actual buying [**USED IN SLIDE**]
+## F4P 2019
+df.all.individual %>% filter(BoughtF4P2019==1) %>% filter(Year==2019) %>% filter(F4P==1) %>% group_by(NewFan) %>% summarize(notequal=n_distinct(YearEventNameAccountID[F4P!=PriceCodeF4P]), equal=n_distinct(YearEventNameAccountID[F4P==PriceCodeF4P]), f4p_pct= equal / (equal + notequal)) %>% kable()
+
+## F4P 2018
+df.all.individual %>% filter(BoughtF4P2018==1) %>% filter(Year==2018) %>% filter(F4P==1) %>% group_by(NewFan) %>% summarize(notequal=n_distinct(YearEventNameAccountID[F4P!=PriceCodeF4P]), equal=n_distinct(YearEventNameAccountID[F4P==PriceCodeF4P]), f4p_pct= equal / (equal + notequal)) %>% kable()
+
+## BB 2019
+df.all.individual %>% filter(BoughtBB2019==1) %>% filter(Year==2019) %>% filter(BB==1) %>% group_by(NewFan) %>% summarize(notequal=n_distinct(YearEventNameAccountID[BB!=PriceCodeBB]), equal=n_distinct(YearEventNameAccountID[BB==PriceCodeBB]), bb_pct= equal / (equal + notequal)) %>% kable()
+
+## BB 2018
+df.all.individual %>% filter(BoughtBB2018==1) %>% filter(Year==2018) %>% filter(BB==1) %>% group_by(NewFan) %>% summarize(notequal=n_distinct(YearEventNameAccountID[BB!=PriceCodeBB]), equal=n_distinct(YearEventNameAccountID[BB==PriceCodeBB]), bb_pct= equal / (equal + notequal)) %>% kable()
+
+```
+
+```{r}
+# Overview / waterfall of tickets [**USED IN SLIDE**]
+
+# BY TICKET VOLUME
+## All
+df.all.master %>% group_by(Year) %>% summarize(sum_total=sum(SumOfSold))
+## Non-individual
+df.all.master %>% group_by(Year, TicketingCategory) %>% summarize(sum_total=sum(SumOfSold))
+## Ticket window sales
+df.all.master %>% filter(TicketingCategory=="Individual") %>% filter(AccountID %in% c(-1, -2)) %>% group_by(Year) %>% summarize(sum_total=sum(SumOfSold))
+
+## Remaining volume analyzed
+df.all.master %>% filter(TicketingCategory=="Individual") %>% filter(!AccountID %in% c(-1, -2)) %>% group_by(Year) %>% summarize(sum_total=sum(SumOfSold))
+
+```
+
+```{r}
+# Overview of purchase trend by year [**USED IN SLIDE]
+## Number of promo packages - by distinct fans
+### 2019
+df.all.individual %>% filter(Year==2019) %>% summarize(sum_dfans_boughtpromo = n_distinct(AccountID[BoughtF4P2019==1 | BoughtBB2019==1]), sum_dfans_all = n_distinct(AccountID))
+### 2018
+df.all.individual %>% filter(Year==2018) %>% summarize(sum_dfans_boughtpromo = n_distinct(AccountID[BoughtF4P2018==1 | BoughtBB2018==1]), sum_dfans_all = n_distinct(AccountID))
+### 2017
+df.all.individual %>% group_by(Year) %>% summarize(sum_dfans = n_distinct(AccountID))
+
+## Number of promo packages - by ticket volume
+df.all.individual %>% group_by(Year) %>% summarize(sum_tix_boughtpromo = sum(SumOfSold[PriceCodeBB==1 | PriceCodeF4P==1]), sum_tix_all = sum(SumOfSold))
+
+## Overlap of fans
+### 2019
+df.all.individual %>% filter(Year==2019) %>% group_by(BoughtF4P2019, BoughtBB2019) %>% summarize(sum_dfans = n_distinct(AccountID))
+### 2018
+df.all.individual %>% filter(Year==2018) %>% group_by(BoughtF4P2018, BoughtBB2018) %>% summarize(sum_dfans = n_distinct(AccountID))
+
+```
+
+```{r}
+# Distribution of # of games attended by promo fans vs. non-promo fans in 2019
+promo.fans.games %>% group_by(BoughtPromoIn2019) %>% summarize(avg= sum(countd) / n_distinct(AccountID))
+
+# Breakdown of # of fans who bought f4p, bb, or both
+## 2019
+df.all.individual %>% filter(Year==2019) %>% group_by(BoughtBB2019, BoughtF4P2019) %>% summarize(countd=n_distinct(AccountID)) %>% kable()
+
+## 2018 
+df.all.individual %>% filter(Year==2018) %>% group_by(BoughtBB2018, BoughtF4P2018) %>% summarize(countd=n_distinct(AccountID)) %>% kable()
+
+# Number of games where F4P and B&B are offered
+df.all %>% group_by(Year, BB, F4P) %>% summarize(countd=n_distinct(EventName)) %>% kable()
+```
