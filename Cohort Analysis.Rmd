@@ -1,0 +1,176 @@
+---
+title: "Cohort Analysis"
+author: "Your name"
+date: "May 12, 2020"
+output:
+  pdf_document:
+    number_sections: yes
+colorlinks: true
+urlcolor: 'red'
+fontsize: 12pt
+header-includes: \usepackage{color,soul}
+---
+
+```{r, include=FALSE}
+# We recommend including this entire code chunk at the top of all 
+# your R Markdown files. 'include=FALSE' omits this code in the output
+# but R still runs it.
+
+# Load libraries needed for analysis
+library(knitr)                 # Creating PDF output using Markdown
+library(tidyverse)             # Data manipulation and graphing
+library(readxl)                # To use read_excel()
+library(readr)                 # To read csv()
+library(psych)                 # To use corr.test() for correlation matrices
+library(ggfortify)             # To plot residuals
+theme_set(theme_bw())          # Get rid of gray background in plots
+
+# Set some defaults for the R Markdown document
+opts_chunk$set(echo=TRUE,      # Print the code in all the chunks
+               warning=FALSE,  # Don't print warning statements
+               message=FALSE,  # Don't print other R output messages
+               comment=NA)     # Helps produce prettier output
+```
+
+```{r}
+#Upload Data
+f4p <- read.csv("cohortf4p.csv")
+bb <- read.csv("cohortbb.csv")
+att <- read_excel("/Users/sam/Desktop/ACL/Revenue Model/Revenue Model/df_attendance_merge.xlsx")
+weather <- read.csv("/Users/sam/Desktop/ACL/Revenue Model/Revenue Model/Chicago_weather.csv")
+record <- read.csv("/Users/sam/Desktop/ACL/Revenue Model/Revenue Model/White_Sox_Records.csv")
+```
+
+```{r}
+#Subset Weather and Record Data
+weather <- subset(weather, select = c(PRCP, temp_avg, DateKey))
+record <- subset(record, select = c(Day_Night, Season.Rolling.Average.Runs, Win_pct, DateKey))
+
+#Merge Data Both
+f4p <- f4p %>% 
+  group_by(DateKey) %>%
+  summarize(sum_rev_f4p = sum(ExtendedPrIceTaxIncluded))
+
+bb <- bb %>% 
+  group_by(DateKey) %>%
+  summarize(sum_rev_bb = sum(ExtendedPrIceTaxIncluded))
+
+att <- merge(att, weather, by = "DateKey")
+att <- merge(att, record, by = "DateKey")
+att <- merge(att, f4p, by = "DateKey")
+att <- merge(att, bb, by = "DateKey")
+
+
+#Create Dummy and log Variables
+att <- att %>%
+  mutate(Dteam = factor(Team),
+         Dday = factor(DayName),
+         Dmonth = factor(MonthName),
+         Dpromo = factor(PromoType),
+         Dgametime = factor(Day_Night),
+         ln_tickets = log(TotalScans),
+         ln_revenue = log(sum_rev_fb),
+         ln_revenue_f4psect = log(sum_rev_f4p),
+         ln_revenue_bbsect = log(sum_rev_bb),
+         ln_promo_sold = log(PromoTicketsSold))
+
+#Add Normalized Revenue Variable per Section
+att <- att %>% mutate(normrevf4p = sum_rev_f4p/TotalScans,
+                    ln_normrevf4p = log(normrevf4p),
+                    normrevbb = sum_rev_bb/TotalScans,
+                    ln_normrevbb = log(normrevbb))
+```
+
+#Regression Model Full
+```{r}
+#TotalScans vs. PromoTickets Sold
+ggplot(att, aes(x = PromoTicketsSold, y = TotalScans)) + geom_point() + geom_smooth(method = lm, se = FALSE)
+
+#Regf4pFull
+regf4pfull <- lm(ln_revenue_f4psect ~ ln_promo_sold + Dday + Dmonth + Dgametime + PRCP + temp_avg + Season.Rolling.Average.Runs + Win_pct + Dpromo + Dteam, att %>% filter(PromoTicketsSold > 0))
+summary(regf4pfull)
+
+#Regbbfull
+regbbfull <- lm(ln_revenue_bbsect ~ ln_promo_sold + Dday + Dmonth + Dgametime + PRCP + temp_avg + Season.Rolling.Average.Runs + Win_pct + Dpromo + Dteam, att %>% filter(PromoTicketsSold > 0))
+summary(regbbfull)
+```
+
+#Regression Model F4p
+```{r}
+#Baseline Scenario
+regf4p <- lm(ln_revenue_f4psect ~ ln_tickets + Dday + Dmonth + Dpromo + Dgametime + PRCP + temp_avg + Season.Rolling.Average.Runs + Win_pct, data = att %>% filter(Season != 2019))
+summary(regf4p)
+
+#Apply Scenario to Create Predicted Revenue
+att.pred <- att %>% filter(Season == 2019)
+att.pred$ln_pred_revf4p <- predict(regf4p, att.pred)
+att.pred <- att.pred %>%
+  mutate(pred_revf4p = exp(ln_pred_revf4p))
+
+#Comparing Predicted vs. Actuals
+ggplot(att.pred, aes(x = pred_revf4p, y = sum_rev_f4p)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  facet_wrap(~Dpromo, nrow=2)
+
+#Plotting the Residuals
+pred_revf4p_res <- resid(regf4p)
+
+ggplot(regf4p, aes(x = .fitted, y = .resid)) + geom_point()
+```
+
+#Scenario Analysis F4p
+```{r}
+#Scenario 0
+att.pred %>%
+  filter(Season == "2019") %>%
+  group_by(Dpromo) %>%
+  summarize(avg_pred_revf4p = mean(pred_revf4p),
+            avg_actual_revf4p = mean(sum_rev_f4p),
+            difference_pred_vs_actuals = avg_actual_revf4p - avg_pred_revf4p)
+```
+
+#Scenario 1
+```{r}
+#Replace Tuesday-Thursday Promos with "None"
+scen1 <- att.pred %>% filter(Season == "2019")
+
+scen1$PromoType <- with(scen1, replace(PromoType, Dday == "Thursday", "None"))
+scen1$Dpromo <- factor(scen1$PromoType)
+
+
+#Apply Regression to Scenario
+scen1$ln_pred_revf4psect <- predict(regf4p, scen1)
+scen1 <- scen1 %>%
+  mutate(pred_revf4psect = exp(ln_pred_revf4psect))
+
+#Table of Predicted ARPU
+scen1 %>% 
+  group_by(Dpromo) %>%
+  summarize(pred_revenue_f4psect = mean(pred_revf4psect))%>%
+  kable(digits = 2)
+```
+
+#Regression Model bb
+```{r}
+#Baseline Scenario
+regbb <- lm(ln_revenue_bbsect ~ ln_tickets + Dday + Dmonth + Dpromo + Dgametime + PRCP + temp_avg + Season.Rolling.Average.Runs + Win_pct, data = att %>% filter(Season != 2019))
+summary(regbb)
+
+#Apply Scenario to Create Predicted Revenue
+att.pred <- att %>% filter(Season == 2019)
+att.pred$ln_pred_revbb <- predict(regbb, att.pred)
+att.pred <- att.pred %>%
+  mutate(pred_revbb = exp(ln_pred_revbb))
+
+#Comparing Predicted vs. Actuals
+ggplot(att.pred, aes(x = pred_revbb, y = sum_rev_bb)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  facet_wrap(~Dpromo, nrow=2)
+
+#Plotting the Residuals
+pred_revbb_res <- resid(regbb)
+
+ggplot(regbb, aes(x = .fitted, y = .resid)) + geom_point()
+```

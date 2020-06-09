@@ -1,0 +1,157 @@
+---
+title: "Revenue Model"
+author: "Your name"
+date: "May 12, 2020"
+output:
+  pdf_document:
+    number_sections: yes
+colorlinks: true
+urlcolor: 'red'
+fontsize: 12pt
+header-includes: \usepackage{color,soul}
+---
+
+```{r, include=FALSE}
+# We recommend including this entire code chunk at the top of all 
+# your R Markdown files. 'include=FALSE' omits this code in the output
+# but R still runs it.
+
+# Load libraries needed for analysis
+library(knitr)                 # Creating PDF output using Markdown
+library(tidyverse)             # Data manipulation and graphing
+library(readxl)                # To use read_excel()
+library(readr)                 # To read csv()
+library(psych)                 # To use corr.test() for correlation matrices
+library(ggfortify)             # To plot residuals
+theme_set(theme_bw())          # Get rid of gray background in plots
+
+# Set some defaults for the R Markdown document
+opts_chunk$set(echo=TRUE,      # Print the code in all the chunks
+               warning=FALSE,  # Don't print warning statements
+               message=FALSE,  # Don't print other R output messages
+               comment=NA)     # Helps produce prettier output
+```
+
+```{r}
+#Upload Data
+df <- read_excel("df_attendance_merge.xlsx")
+weather <- read.csv("Chicago_weather.csv")
+record <- read.csv("White_Sox_Records.csv")
+
+#Combine Dataframes
+weather <- subset(weather, select = c(PRCP, temp_avg, DateKey))
+record <- subset(record, select = c(Day_Night, Season.Rolling.Average.Runs, Win_pct, DateKey))
+
+df <- merge(df, weather, by = "DateKey")
+df <- merge(df, record, by = "DateKey")
+
+#Create Dummy and log Variables
+df <- df %>%
+  filter(TotalScans > 0) %>%
+  mutate(Dteam = factor(Team),
+         Dday = factor(DayName),
+         Dmonth = factor(MonthName),
+         Dpromo = factor(PromoType),
+         Dgametime = factor(Day_Night),
+         ln_tickets = log(TotalScans),
+         ln_revenue = log(sum_rev_fb))
+
+#Add ARPU Variable
+df <- df %>% mutate(arpu = sum_rev_fb/TotalScans,
+                    ln_arpu = log(arpu))
+
+#Test Data (2016-2018)
+test <- df %>% filter(Season != "2019")
+
+#Data to apply prediction (2019 Season)
+prediction <- df %>% filter(Season == "2019")
+```
+
+#Exploratory Analysis
+```{r}
+#ARPU by day
+df %>%
+  group_by(Dday) %>%
+  summarize(per_cap = mean(arpu))%>%
+  kable(digits = 2)
+
+#ARPU by Promo
+df %>%
+  group_by(Dpromo) %>%
+  summarize(per_cap = mean(arpu))%>%
+  kable(digits = 2)
+
+#Graph of Per Cap and Attendance
+ggplot(df, aes(x = TotalScans, y = arpu, color = Dpromo)) + geom_point() + facet_wrap(~Season, nrow = 2) 
+
+#Graph of Per Cap and Win Percentage
+ggplot(df, aes(x = Win_pct, y = arpu)) + geom_point() + facet_wrap(~Season, nrow = 2) + geom_smooth(method = lm, se=FALSE)
+```
+
+#Regression Model
+```{r}
+#Regression using full dataset
+regfull <- lm(ln_arpu ~ ln_tickets + Dday + Dmonth + Dpromo + PRCP + temp_avg + Dgametime + Season.Rolling.Average.Runs + Win_pct, data = df)
+summary(regfull)
+
+#Baseline Scenario
+reg <- lm(ln_arpu ~ ln_tickets + Dday + Dmonth + Dpromo + PRCP + temp_avg + Dgametime + Season.Rolling.Average.Runs + Win_pct, data = test)
+summary(reg)
+
+#Apply Scenario to Create Predicted Revenue
+df.pred <- prediction
+df.pred$ln_pred_arpu <- predict(reg, df.pred)
+df.pred <- df.pred %>%
+  mutate(pred_arpu = exp(ln_pred_arpu))
+
+#Comparing Predicted vs. Actuals
+ggplot(df.pred, aes(x = pred_arpu, y = arpu)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  facet_wrap(~Dpromo, nrow=2)
+
+#Plotting the Residuals
+pred_arpu_res <- resid(reg)
+
+ggplot(reg, aes(x = .fitted, y = .resid)) + geom_point()
+```
+
+#Scenario 0
+```{r}
+#Table of Predicted Per Cap vs. Actual for 2019 Season
+df.pred %>%
+  group_by(PromoType) %>%
+  summarize(pred_per_cap = mean(pred_arpu),
+            actual_per_cap = mean(arpu)) %>%
+  kable(digits = 2)
+```
+
+#Scenario 1 - Eliminate F4P and BB promotional activity on Tuesday through Thursday
+```{r}
+#Modify Promotional Activity to Eliminate Promos on Tuesday through Thursday
+scen1 <- df.pred 
+```
+
+```{r}
+#Replace Tuesday-Thursday Promos with "None"
+scen1$PromoType <- with(scen1, replace(PromoType, Dday =="Tuesday" | Dday == "Wednesday" | Dday == "Thursday", "None"))
+scen1$Dpromo <- factor(scen1$PromoType)
+
+
+#Apply Regression to Scenario
+scen1$ln_pred_arpu <- predict(reg, scen1)
+scen1 <- scen1 %>%
+  mutate(pred_arpu = exp(ln_pred_arpu))
+
+#Table of Predicted ARPU
+scen1 %>% 
+  group_by(Dpromo) %>%
+  summarize(pred_per_cap = mean(pred_arpu))%>%
+  kable(digits = 2)
+```
+
+#Scenario 2 - Increase Instances in which Both F4P and BB Offered Concurrently
+```{r}
+#Scenario 2
+
+```
